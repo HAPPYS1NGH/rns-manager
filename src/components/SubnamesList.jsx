@@ -34,7 +34,14 @@ export default function SubnamesList({ parentName, onManage }) {
             ) : (
                 <div className="records">
                     {existingSubnames.map(sub => (
-                        <div key={sub.labelHash} className="record-row subname-row">
+                        <div
+                            key={sub.labelHash}
+                            className={`record-row subname-row ${sub.fullName ? 'clickable' : ''}`}
+                            role={sub.fullName ? 'button' : undefined}
+                            tabIndex={sub.fullName ? 0 : undefined}
+                            onClick={sub.fullName ? () => onManage?.(sub.fullName) : undefined}
+                            onKeyDown={sub.fullName ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onManage?.(sub.fullName) } } : undefined}
+                        >
                             <span className="record-label">
                                 {sub.label ? (
                                     <>
@@ -57,12 +64,7 @@ export default function SubnamesList({ parentName, onManage }) {
                                 {sub.hasResolver && <span className="resolver-dot" title="Has resolver">●</span>}
                                 {!sub.hasResolver && <span className="resolver-dot dim" title="No resolver">○</span>}
                                 {sub.fullName && (
-                                    <button
-                                        className="btn-ghost btn-sm"
-                                        onClick={() => onManage?.(sub.fullName)}
-                                    >
-                                        MANAGE →
-                                    </button>
+                                    <span className="manage-hint">MANAGE →</span>
                                 )}
                             </div>
                         </div>

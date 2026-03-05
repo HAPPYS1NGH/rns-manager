@@ -1,25 +1,38 @@
 /**
- * useSubnames — Subname discovery via Blockscout event logs + localStorage labels
+ * useSubnames — Subname discovery via The Graph subgraph
  *
- * Queries the Rootstock Blockscout API for NewOwner events on the parent node,
- * then batch-reads owner + resolver for each discovered subnode on-chain.
- * Merges with localStorage to preserve known label text.
+ * Queries the RNS subgraph directly to fetch all subdomains of a parent name.
+ * The subgraph provides label names directly, eliminating the need for
+ * Blockscout event parsing.
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useReadContracts } from 'wagmi'
-import { namehash, keccak256, encodePacked, toHex } from 'viem'
+import { namehash, keccak256, encodePacked } from 'viem'
 import { normalize } from 'viem/ens'
 import { rootstock } from 'viem/chains'
-import { RNS_REGISTRY_ADDRESS, REGISTRY_ABI } from '../contracts'
+import { RNS_REGISTRY_ADDRESS, REGISTRY_ABI, RESOLVER_ABI } from '../contracts'
 
 const STORAGE_PREFIX = 'rns-subnames:'
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000'
 
-// NewOwner event topic0
-const NEW_OWNER_TOPIC = '0xce0457fe73731f824cc272376169235128c118b49d344817417c6d108d155e82'
+// The Graph API key (set via Vite env)
+const THEGRAPH_API_KEY = import.meta.env.VITE_THEGRAPH_API_KEY
+const SUBGRAPH_ID = 'DhBgWdhFsujyqFmYqaTwUyyYm5QWBEhqVnBHek9JYPkn'
 
-// Blockscout API base URL for Rootstock
-const BLOCKSCOUT_API = 'https://rootstock.blockscout.com/api'
+const GET_SUBDOMAINS_QUERY = `
+  query GetSubdomains($nameContains: String!) {
+    domains(where: { name_contains: $nameContains }) {
+      id
+      name
+      labelName
+      labelhash
+      owner
+      resolver {
+        id
+      }
+    }
+  }
+`
 
 // ─── LocalStorage helpers ───────────────────────────────────────────────────
 
@@ -36,47 +49,91 @@ function saveLabels(parentName, labels) {
     localStorage.setItem(STORAGE_PREFIX + parentName, JSON.stringify(labels))
 }
 
-// ─── Blockscout event fetcher ───────────────────────────────────────────────
+// ─── The Graph Subgraph Fetcher ─────────────────────────────────────────────
 
-async function fetchNewOwnerEvents(parentNode) {
-    const url = new URL(BLOCKSCOUT_API)
-    url.searchParams.set('module', 'logs')
-    url.searchParams.set('action', 'getLogs')
-    url.searchParams.set('address', RNS_REGISTRY_ADDRESS)
-    url.searchParams.set('topic0', NEW_OWNER_TOPIC)
-    url.searchParams.set('topic1', parentNode)
-    url.searchParams.set('topic0_1_opr', 'and')
-    url.searchParams.set('fromBlock', '0')
-    url.searchParams.set('toBlock', '99999999')
-
-    const res = await fetch(url.toString())
-    const json = await res.json()
-
-    if (json.status !== '1' || !Array.isArray(json.result)) {
+/**
+ * Fetch all subdomains directly from the RNS subgraph using fetch (POST).
+ * Note: The subgraph doesn't index parent relationship, so we search by name
+ * and filter client-side.
+ *
+ * @param {string} parentName - The parent domain name (e.g., "happy.rsk")
+ * @returns {Promise<Array>} Array of subdomain objects with label, labelhash, owner
+ */
+async function fetchSubnamesFromSubgraph(parentName) {
+    if (!THEGRAPH_API_KEY || !parentName) {
+        console.warn('[useSubnames] Missing THEGRAPH_API_KEY or parentName:', { 
+            hasApiKey: !!THEGRAPH_API_KEY, 
+            parentName 
+        })
         return []
     }
 
-    // Each log: topics[2] = labelHash, data = abi.encode(owner)
-    // Deduplicate by labelHash (keep latest owner)
-    const byLabel = new Map()
-    for (const log of json.result) {
-        const labelHash = log.topics[2]
-        const owner = '0x' + log.data.slice(26) // strip padding
-        if (labelHash) {
-            byLabel.set(labelHash, owner)
-        }
-    }
+    console.log('[useSubnames] Fetching subnames from subgraph, parentName:', parentName)
 
-    return Array.from(byLabel.entries()).map(([labelHash, owner]) => ({
-        labelHash,
-        lastOwner: owner,
-    }))
+    const url = `https://gateway-arbitrum.network.thegraph.com/api/${THEGRAPH_API_KEY}/subgraphs/id/${SUBGRAPH_ID}`
+
+    try {
+        console.log('[useSubnames] Querying subgraph with POST:', url)
+        
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                query: GET_SUBDOMAINS_QUERY,
+                variables: { nameContains: parentName },
+            }),
+        })
+
+        console.log('[useSubnames] Response status:', res.status)
+        
+        const result = await res.json()
+        console.log('[useSubnames] Query result:', result)
+
+        if (result.errors) {
+            console.warn('[useSubnames] Subgraph query error:', result.errors)
+            return []
+        }
+
+        const domains = result.data?.domains
+
+        if (!Array.isArray(domains)) {
+            console.warn('[useSubnames] Subgraph returned no domains:', result.data)
+            return []
+        }
+
+        console.log('[useSubnames] Found domains before filter:', domains.length, domains)
+
+        // Filter to only include subdomains (not the parent itself)
+        // Subdomains have format: "label.parentName"
+        const subdomains = domains.filter(d => 
+            d.name && 
+            d.name !== parentName && 
+            d.name.endsWith('.' + parentName)
+        )
+
+        console.log('[useSubnames] Found subdomains after filter:', subdomains.length, subdomains)
+
+        // Transform subgraph results into our format
+        return subdomains.map(d => ({
+            label: d.labelName || null,
+            labelHash: d.labelhash || null,
+            fullDomain: d.name || null,
+            owner: d.owner || null,
+            hasResolver: !!d.resolver?.id,
+            subnodeHash: d.id,
+        }))
+    } catch (err) {
+        console.warn('[useSubnames] Failed to fetch subnames:', err)
+        return []
+    }
 }
 
 // ─── Compute subnode hash from parent node + label hash ─────────────────────
 
 function computeSubnodeHash(parentNode, labelHash) {
-    // subnode = keccak256(abi.encodePacked(parentNode, labelHash))
+    if (!parentNode || !labelHash) return null
     return keccak256(encodePacked(['bytes32', 'bytes32'], [parentNode, labelHash]))
 }
 
@@ -99,29 +156,53 @@ export function useSubnames(parentName) {
         // invalid parent name
     }
 
-    // Load localStorage labels and fetch events
+    // Fetch subnames from The Graph subgraph
     useEffect(() => {
+        console.log('[useSubnames] useEffect triggered:', { parentName, parentNode })
+        
         if (!parentName || !parentNode) {
+            console.log('[useSubnames] Skipping - missing parentName or parentNode')
             setDiscoveredSubnodes([])
             setLabelMap({})
             return
         }
 
-        // Load known labels from localStorage
+        // Load known labels from localStorage (user overrides)
         const stored = getStoredLabels(parentName)
+        console.log('[useSubnames] Stored labels:', stored)
         setLabelMap(stored)
 
-        // Fetch events from Blockscout
+        // Fetch subnames from The Graph subgraph
         setIsFetching(true)
-        fetchNewOwnerEvents(parentNode)
-            .then(events => {
-                setDiscoveredSubnodes(events.map(e => ({
-                    labelHash: e.labelHash,
-                    subnodeHash: computeSubnodeHash(parentNode, e.labelHash),
-                })))
+        fetchSubnamesFromSubgraph(parentName)
+            .then(subdomains => {
+                // Transform subgraph results into our format
+                const nextSubnodes = subdomains.map(d => ({
+                    labelHash: d.labelHash,
+                    subnodeHash: d.subnodeHash,
+                    label: d.label,                 // Direct from subgraph!
+                    fullDomain: d.fullDomain,       // Full name from subgraph
+                    subgraphOwner: d.owner,         // Owner from subgraph (may be stale)
+                    hasResolver: d.hasResolver,
+                }))
+                setDiscoveredSubnodes(nextSubnodes)
+
+                // Merge labels: subgraph provides direct labels, localStorage takes precedence
+                if (nextSubnodes.length > 0) {
+                    const subgraphLabels = {}
+                    for (const sub of nextSubnodes) {
+                        if (sub.label && sub.labelHash) {
+                            subgraphLabels[sub.labelHash] = sub.label
+                        }
+                    }
+                    // Merge: localStorage/user entries take precedence over subgraph
+                    const merged = { ...subgraphLabels, ...stored }
+                    saveLabels(parentName, merged)
+                    setLabelMap(merged)
+                }
             })
             .catch(err => {
-                console.warn('Failed to fetch subname events:', err)
+                console.warn('Failed to fetch subnames from subgraph:', err)
             })
             .finally(() => setIsFetching(false))
     }, [parentName, parentNode])
@@ -153,6 +234,47 @@ export function useSubnames(parentName) {
         query: { enabled: contracts.length > 0 },
     })
 
+    // Second batch: fetch name from resolver text record for subnames that have a resolver
+    const nameContracts = useMemo(() => {
+        if (!results) return []
+        return discoveredSubnodes.flatMap((sub, i) => {
+            const resolver = results[i * 2 + 1]?.status === 'success' ? results[i * 2 + 1].result : null
+            if (!resolver || resolver === ZERO_ADDR) return []
+            return [{
+                address: resolver,
+                abi: RESOLVER_ABI,
+                functionName: 'text',
+                args: [sub.subnodeHash, 'name'],
+                chainId: rootstock.id,
+            }]
+        })
+    }, [results, discoveredSubnodes])
+
+    const { data: nameResults } = useReadContracts({
+        contracts: nameContracts,
+        query: { enabled: nameContracts.length > 0 },
+    })
+
+    // Map subnodeHash → resolved name from text record
+    const nameBySubnodeHash = useMemo(() => {
+        const map = {}
+        if (!nameResults || !results) return map
+        let nameResultIdx = 0
+        for (let i = 0; i < discoveredSubnodes.length; i++) {
+            const sub = discoveredSubnodes[i]
+            const resolver = results[i * 2 + 1]?.status === 'success' ? results[i * 2 + 1].result : null
+            if (resolver && resolver !== ZERO_ADDR) {
+                const r = nameResults[nameResultIdx]
+                const nameVal = r?.status === 'success' ? r.result : null
+                if (nameVal && typeof nameVal === 'string' && nameVal.trim()) {
+                    map[sub.subnodeHash] = nameVal.trim()
+                }
+                nameResultIdx++
+            }
+        }
+        return map
+    }, [nameResults, results, discoveredSubnodes])
+
     // Build subnames array from results
     const subnames = discoveredSubnodes.map((sub, i) => {
         const ownerResult = results?.[i * 2]
@@ -161,14 +283,22 @@ export function useSubnames(parentName) {
         const owner = ownerResult?.status === 'success' ? ownerResult.result : null
         const resolver = resolverResult?.status === 'success' ? resolverResult.result : null
 
-        // Look up human-readable label from localStorage
-        const label = labelMap[sub.labelHash] || null
+        // Look up human-readable label: localStorage/user first, then subgraph direct label, then resolver text("name"), then fallback to hash
+        const label = labelMap[sub.labelHash] || sub.label || null
+        const resolvedName = nameBySubnodeHash[sub.subnodeHash] // full name from resolver, e.g. "alice.happy.rsk"
+        const resolvedLabel = resolvedName && resolvedName.includes('.')
+            ? resolvedName.split('.')[0]
+            : resolvedName
+
+        const displayLabel = label || resolvedLabel
+        const fullName = resolvedName || (displayLabel ? `${displayLabel}.${parentName}` : null) || sub.fullDomain || null
+        const displayName = fullName || (sub.labelHash ? `[${sub.labelHash.slice(0, 10)}...].${parentName}` : `?.${parentName}`)
 
         return {
             labelHash: sub.labelHash,
-            label,
-            fullName: label ? `${label}.${parentName}` : null,
-            displayName: label ? `${label}.${parentName}` : `[${sub.labelHash.slice(0, 10)}...].${parentName}`,
+            label: displayLabel,
+            fullName,
+            displayName,
             owner: owner && owner !== ZERO_ADDR ? owner : null,
             hasResolver: !!resolver && resolver !== ZERO_ADDR,
             exists: !!owner && owner !== ZERO_ADDR,
@@ -198,6 +328,7 @@ export function useSubnames(parentName) {
             return [...prev, {
                 labelHash,
                 subnodeHash: parentNode ? computeSubnodeHash(parentNode, labelHash) : null,
+                label: normalized,  // We know the label since we're adding it
             }]
         })
     }, [parentName, parentNode])

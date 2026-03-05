@@ -12,8 +12,10 @@
     "@ensdomains/address-encoder": "^1.1.4",
     "@rainbow-me/rainbowkit": "^2.2.4",
     "@tanstack/react-query": "^5.66.0",
+    "graphql": "^16.13.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "urql": "^5.0.1",
     "viem": "^2.21.0",
     "wagmi": "^2.14.0"
   },
