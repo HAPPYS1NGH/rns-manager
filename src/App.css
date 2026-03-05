@@ -470,7 +470,10 @@ body {
   font-size: 0.82rem;
   color: var(--text);
   word-break: break-all;
+  overflow-wrap: anywhere;
   line-height: 1.5;
+  flex: 1;
+  min-width: 0;
 }
 
 .record-value.dim {

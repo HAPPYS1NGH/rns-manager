@@ -12,38 +12,39 @@ import ContentHash from './components/ContentHash'
 import SubnamesList from './components/SubnamesList'
 import CreateSubname from './components/CreateSubname'
 
-// ─── Hash routing helpers ───────────────────────────────────────────────────
+// ─── Path routing helpers ───────────────────────────────────────────────────
 
-function getNameFromHash() {
-  const hash = window.location.hash.slice(1) // strip '#'
-  if (!hash) return ''
-  // Remove leading slash if present (e.g. #/happy.rsk → happy.rsk)
-  const cleaned = hash.startsWith('/') ? hash.slice(1) : hash
+function getNameFromPath() {
+  const path = window.location.pathname
+  if (!path || path === '/') return ''
+  // Remove leading slash if present (e.g. /happy.rsk → happy.rsk)
+  const cleaned = path.startsWith('/') ? path.slice(1) : path
   const decoded = decodeURIComponent(cleaned).toLowerCase().trim()
   // Auto-append .rsk if missing
   if (decoded && !decoded.endsWith('.rsk')) return `${decoded}.rsk`
   return decoded
 }
 
-function setHashRoute(name) {
+function setPathRoute(name) {
   const path = name || ''
-  window.history.replaceState(null, '', path ? `#/${path}` : window.location.pathname)
+  window.history.replaceState(null, '', path ? `/${path}` : '/')
 }
 
 // ─── App ────────────────────────────────────────────────────────────────────
 
 export default function App() {
   const { isConnected } = useAccount()
-  const [name, setName] = useState(() => getNameFromHash())
+  const [name, setName] = useState(() => getNameFromPath())
 
-  // Sync name from URL hash on mount and hashchange
+  // Sync name from URL path on mount and popstate
   useEffect(() => {
-    const onHashChange = () => {
-      const hashName = getNameFromHash()
-      if (hashName) setName(hashName)
+    const onPopState = () => {
+      const pathName = getNameFromPath()
+      if (pathName) setName(pathName)
+      else setName('')
     }
-    window.addEventListener('hashchange', onHashChange)
-    return () => window.removeEventListener('hashchange', onHashChange)
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
   const nameData = useNameData(name)
@@ -51,13 +52,13 @@ export default function App() {
   // Handle search: update state + URL
   const handleSearch = useCallback((fullName) => {
     setName(fullName)
-    setHashRoute(fullName)
+    setPathRoute(fullName)
   }, [])
 
   // Handle "Manage →" from SubnamesList
   const handleManageSubname = useCallback((fullName) => {
     setName(fullName)
-    setHashRoute(fullName)
+    setPathRoute(fullName)
   }, [])
 
   // Derive parent name for subnames section
