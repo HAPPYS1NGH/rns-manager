@@ -1,13 +1,27 @@
 /**
  * Content hash encoding/decoding utilities
- * Wraps @ensdomains/content-hash for use with RNS/ENS resolver contracts
+ * Uses multiformats/cid directly since @ensdomains/content-hash v3's
+ * encode() doesn't produce proper multicodec-prefixed contenthash bytes.
  */
-import { encode, decode, getCodec } from '@ensdomains/content-hash'
+import { CID } from 'multiformats/cid'
+
+// Multicodec namespace prefixes for contenthash
+const NAMESPACE = {
+    ipfs: 0xe3,
+    ipns: 0xe5,
+    swarm: 0xe4,
+}
+
+const NAMESPACE_NAMES = {
+    0xe3: 'ipfs',
+    0xe5: 'ipns',
+    0xe4: 'swarm',
+}
 
 /**
  * Decode raw content hash bytes from the resolver into a human-readable URI
  * @param {string} rawHex - Raw hex bytes from contenthash(node), e.g. "0xe3010170..."
- * @returns {string|null} - Decoded URI (e.g. "ipfs://Qm...") or null if empty
+ * @returns {string|null} - Decoded URI (e.g. "ipfs://bafybeig...") or null if empty
  */
 export function decodeContentHash(rawHex) {
     if (!rawHex || rawHex === '0x' || rawHex === '0x0') {
@@ -15,23 +29,24 @@ export function decodeContentHash(rawHex) {
     }
 
     try {
-        const hex = rawHex.startsWith('0x') ? rawHex.slice(2) : rawHex
-        const codec = getCodec(hex)
-        const decoded = decode(hex)
+        const clean = rawHex.startsWith('0x') ? rawHex.slice(2) : rawHex
+        const bytes = hexToBytes(clean)
 
-        // Map codec to URI scheme
-        const schemes = {
-            'ipfs-ns': 'ipfs',
-            'ipns-ns': 'ipns',
-            'swarm-ns': 'bzz',
-            'onion': 'onion',
-            'onion3': 'onion3',
-            'skynet-ns': 'sia',
-            'arweave-ns': 'ar',
+        const nsCode = bytes[0]
+        const nsName = NAMESPACE_NAMES[nsCode]
+
+        if (!nsName) {
+            return null // unknown namespace
         }
 
-        const scheme = schemes[codec] || codec
-        return `${scheme}://${decoded}`
+        if (nsName === 'ipfs' || nsName === 'ipns') {
+            const cidBytes = bytes.slice(1)
+            const cid = CID.decode(cidBytes)
+            return `${nsName}://${cid.toString()}`
+        }
+
+        // Swarm or other: return raw hex after namespace byte
+        return `${nsName}://${bytesToHex(bytes.slice(1))}`
     } catch (err) {
         console.warn('Failed to decode content hash:', err)
         return null
@@ -39,50 +54,70 @@ export function decodeContentHash(rawHex) {
 }
 
 /**
- * Encode a human-readable content hash URI into raw bytes for the resolver
- * Supports: ipfs://<CID>, ipns://<name>, bzz://<hash>
- * @param {string} uri - Content hash URI
- * @returns {string} - Hex-encoded bytes with 0x prefix
+ * Encode a content hash value into raw bytes for the resolver.
+ * Accepts:
+ *   - IPFS CID (Qm... or bafy...)
+ *   - ipfs://CID
+ *   - Full URI with any supported scheme
+ *
+ * @param {string} input - CID string or URI
+ * @returns {string} - Hex-encoded contenthash bytes with 0x prefix
  */
-export function encodeContentHash(uri) {
-    const match = uri.match(/^(ipfs|ipns|bzz|sia|ar|onion|onion3):\/\/(.+)$/)
-    if (!match) {
-        throw new Error('Invalid content hash URI. Use ipfs://, ipns://, bzz://, etc.')
+export function encodeContentHash(input) {
+    const trimmed = input.trim()
+
+    // Try to parse as URI first
+    const uriMatch = trimmed.match(/^(ipfs|ipns):\/\/(.+)$/)
+
+    let scheme, value
+    if (uriMatch) {
+        scheme = uriMatch[1]
+        value = uriMatch[2]
+    } else {
+        // Assume raw IPFS CID if no scheme (most common use case)
+        scheme = 'ipfs'
+        value = trimmed
     }
 
-    const [, scheme, value] = match
-
-    // Map URI scheme back to codec
-    const codecs = {
-        'ipfs': 'ipfs-ns',
-        'ipns': 'ipns-ns',
-        'bzz': 'swarm-ns',
-        'onion': 'onion',
-        'onion3': 'onion3',
-        'sia': 'skynet-ns',
-        'ar': 'arweave-ns',
+    const nsCode = NAMESPACE[scheme]
+    if (nsCode === undefined) {
+        throw new Error(`Unsupported scheme: ${scheme}. Use ipfs:// or ipns://`)
     }
 
-    const codec = codecs[scheme]
-    if (!codec) {
-        throw new Error(`Unsupported content hash scheme: ${scheme}`)
+    if (scheme === 'ipfs') {
+        let cid = CID.parse(value)
+        // Convert v0 CIDs (Qm...) to v1 for proper encoding
+        if (cid.version === 0) cid = cid.toV1()
+        const cidBytes = cid.bytes
+        const result = new Uint8Array(1 + cidBytes.length)
+        result[0] = nsCode
+        result.set(cidBytes, 1)
+        return '0x' + bytesToHexStr(result)
     }
 
-    const encoded = encode(codec, value)
-    return '0x' + encoded
+    if (scheme === 'ipns') {
+        // IPNS names are typically encoded as UTF-8 bytes
+        const nameBytes = new TextEncoder().encode(value)
+        const result = new Uint8Array(1 + nameBytes.length)
+        result[0] = nsCode
+        result.set(nameBytes, 1)
+        return '0x' + bytesToHexStr(result)
+    }
+
+    throw new Error(`Encoding not yet implemented for: ${scheme}`)
 }
 
 /**
- * Validate a content hash URI
- * @param {string} uri
+ * Validate a content hash input (CID or URI)
+ * @param {string} input
  * @returns {{ valid: boolean, error?: string }}
  */
-export function validateContentHash(uri) {
-    if (!uri || !uri.trim()) {
-        return { valid: false, error: 'Content hash URI is required' }
+export function validateContentHash(input) {
+    if (!input || !input.trim()) {
+        return { valid: false, error: 'Content hash is required' }
     }
     try {
-        encodeContentHash(uri.trim())
+        encodeContentHash(input.trim())
         return { valid: true }
     } catch (err) {
         return { valid: false, error: err.message }
@@ -90,12 +125,30 @@ export function validateContentHash(uri) {
 }
 
 /**
- * Get the protocol/scheme from a decoded content hash URI
- * @param {string} uri - e.g. "ipfs://Qm..."
- * @returns {string} - e.g. "IPFS"
+ * Get the protocol from a decoded content hash URI
+ * @param {string} uri - e.g. "ipfs://bafybeig..."
+ * @returns {string|null} - e.g. "IPFS"
  */
 export function getContentHashProtocol(uri) {
     if (!uri) return null
     const match = uri.match(/^(\w+):\/\//)
     return match ? match[1].toUpperCase() : null
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function hexToBytes(hex) {
+    const bytes = new Uint8Array(hex.length / 2)
+    for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(hex.substr(i * 2, 2), 16)
+    }
+    return bytes
+}
+
+function bytesToHex(bytes) {
+    return '0x' + bytesToHexStr(bytes)
+}
+
+function bytesToHexStr(bytes) {
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
 }

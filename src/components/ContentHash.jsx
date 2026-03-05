@@ -95,13 +95,13 @@ function ContentHashDisplay({ contentHash, node, resolver, isOwner, isConnected,
                             type="text"
                             value={newHash}
                             onChange={(e) => { setNewHash(e.target.value); setError(''); reset() }}
-                            placeholder="ipfs://Qm... or ipns://..."
+                            placeholder="QmRAQB6Ya... or ipfs://bafy..."
                             spellCheck={false}
                             autoComplete="off"
                         />
                     </div>
                     {error && <p className="field-error">{error}</p>}
-                    <p className="hint">Supported: ipfs://, ipns://, bzz://, ar://, sia://</p>
+                    <p className="hint">Paste an IPFS CID (Qm... or bafy...) or a full ipfs:// URI</p>
                     <div className="action-row">
                         <button className="btn-primary btn-sm" onClick={handleSave} disabled={isWriting || isConfirming}>
                             {isWriting ? 'SIGN…' : isConfirming ? 'CONFIRMING…' : 'SAVE'}

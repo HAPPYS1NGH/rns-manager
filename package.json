@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@ensdomains/address-encoder": "^1.1.4",
-    "@ensdomains/content-hash": "^3.0.0",
     "@rainbow-me/rainbowkit": "^2.2.4",
     "@tanstack/react-query": "^5.66.0",
     "react": "^18.3.1",

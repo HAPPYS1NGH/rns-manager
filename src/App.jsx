@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 
@@ -12,25 +12,61 @@ import ContentHash from './components/ContentHash'
 import SubnamesList from './components/SubnamesList'
 import CreateSubname from './components/CreateSubname'
 
+// ─── Hash routing helpers ───────────────────────────────────────────────────
+
+function getNameFromHash() {
+  const hash = window.location.hash.slice(1) // strip '#'
+  if (!hash) return ''
+  // Remove leading slash if present (e.g. #/happy.rsk → happy.rsk)
+  const cleaned = hash.startsWith('/') ? hash.slice(1) : hash
+  const decoded = decodeURIComponent(cleaned).toLowerCase().trim()
+  // Auto-append .rsk if missing
+  if (decoded && !decoded.endsWith('.rsk')) return `${decoded}.rsk`
+  return decoded
+}
+
+function setHashRoute(name) {
+  const path = name || ''
+  window.history.replaceState(null, '', path ? `#/${path}` : window.location.pathname)
+}
+
+// ─── App ────────────────────────────────────────────────────────────────────
+
 export default function App() {
   const { isConnected } = useAccount()
-  const [name, setName] = useState('')
+  const [name, setName] = useState(() => getNameFromHash())
+
+  // Sync name from URL hash on mount and hashchange
+  useEffect(() => {
+    const onHashChange = () => {
+      const hashName = getNameFromHash()
+      if (hashName) setName(hashName)
+    }
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
 
   const nameData = useNameData(name)
 
-  // Handle "Manage →" from SubnamesList — loads a subname into search
+  // Handle search: update state + URL
+  const handleSearch = useCallback((fullName) => {
+    setName(fullName)
+    setHashRoute(fullName)
+  }, [])
+
+  // Handle "Manage →" from SubnamesList
   const handleManageSubname = useCallback((fullName) => {
     setName(fullName)
+    setHashRoute(fullName)
   }, [])
 
   // Derive parent name for subnames section
-  // e.g. "happy.rsk" → parentName is "happy.rsk"
-  // e.g. "alice.happy.rsk" → parentName is "happy.rsk"
+  // "happy.rsk" → parentName = "happy.rsk"
+  // "alice.happy.rsk" → parentName = null (only show subnames for 2nd-level names)
   const getParentName = (n) => {
     if (!n) return null
     const parts = n.split('.')
-    // Only show subnames for 2nd-level names (e.g. happy.rsk), not sub-subnames
-    if (parts.length === 2) return n
+    if (parts.length === 2) return n // e.g. happy.rsk
     return null
   }
 
@@ -43,7 +79,7 @@ export default function App() {
 
       <main className="main">
         {/* Search */}
-        <NameSearch onSearch={(n) => { setName(n); nameData.refetch?.() }} />
+        <NameSearch onSearch={handleSearch} initialValue={name} />
 
         {/* Core Records */}
         <RecordsCard nameData={nameData} isConnected={isConnected} />
