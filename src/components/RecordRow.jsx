@@ -49,12 +49,12 @@ export default function RecordRow({
                         >
                             {copied ? '✓' : '⎘'}
                         </button>
-                        {editable && onEdit && (
-                            <button className="edit-btn" onClick={onEdit} title="Edit">
-                                ✎
-                            </button>
-                        )}
                     </>
+                )}
+                {!loading && editable && onEdit && (
+                    <button className="edit-btn" onClick={onEdit} title={dim || !value ? 'Add' : 'Edit'}>
+                        {dim || !value ? '+' : '✎'}
+                    </button>
                 )}
             </div>
         </div>

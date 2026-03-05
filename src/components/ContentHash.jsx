@@ -37,6 +37,17 @@ export default function ContentHash({ nameData, isConnected }) {
                         isConnected={isConnected}
                         onSuccess={refetch}
                     />
+
+                    {/* Show a prominent "Set Content Hash" button when none is set */}
+                    {!contentHash && (
+                        <PermissionGate isConnected={isConnected} isOwner={isOwner} action="set a content hash">
+                            <SetContentHashButton
+                                node={node}
+                                resolver={resolver}
+                                onSuccess={refetch}
+                            />
+                        </PermissionGate>
+                    )}
                 </div>
             )}
         </section>
@@ -139,5 +150,80 @@ function ContentHashDisplay({ contentHash, node, resolver, isOwner, isConnected,
                 </p>
             )}
         </>
+    )
+}
+
+// ─── Set Content Hash Button/Form ──────────────────────────────────────────
+
+function SetContentHashButton({ node, resolver, onSuccess }) {
+    const [show, setShow] = useState(false)
+    const [value, setValue] = useState('')
+    const [error, setError] = useState('')
+    const { write, isWriting, isConfirming, isConfirmed, isWriteError, errorMessage, reset } = useWriteRecord()
+
+    if (!show) {
+        return (
+            <button className="btn-add" onClick={() => setShow(true)}>
+                + Set Content Hash
+            </button>
+        )
+    }
+
+    const handleSubmit = (e) => {
+        e.preventDefault()
+        setError('')
+        const validation = validateContentHash(value)
+        if (!validation.valid) {
+            setError(validation.error)
+            return
+        }
+        try {
+            const encoded = encodeContentHash(value.trim())
+            write({
+                address: resolver,
+                abi: RESOLVER_ABI,
+                functionName: 'setContenthash',
+                args: [node, encoded],
+            })
+        } catch (err) {
+            setError(err.message)
+        }
+    }
+
+    if (isConfirmed) {
+        setTimeout(() => {
+            setShow(false)
+            setValue('')
+            reset()
+            onSuccess?.()
+        }, 1500)
+    }
+
+    return (
+        <form onSubmit={handleSubmit} className="add-record-form">
+            <div className="input-wrap">
+                <input
+                    className="input"
+                    type="text"
+                    value={value}
+                    onChange={(e) => { setValue(e.target.value); setError(''); reset() }}
+                    placeholder="QmRAQB6Ya... or ipfs://bafy..."
+                    spellCheck={false}
+                    autoComplete="off"
+                />
+            </div>
+            {error && <p className="field-error">{error}</p>}
+            <p className="hint">Paste an IPFS CID (Qm... or bafy...) or a full ipfs:// URI</p>
+            <div className="action-row">
+                <button className="btn-primary btn-sm" type="submit" disabled={isWriting || isConfirming}>
+                    {isWriting ? 'SIGN…' : isConfirming ? 'CONFIRMING…' : 'SET CONTENT HASH'}
+                </button>
+                <button className="btn-ghost btn-sm" type="button" onClick={() => { setShow(false); setValue(''); setError(''); reset() }}>
+                    CANCEL
+                </button>
+                {isConfirmed && <span className="status-ok">✓ Saved</span>}
+                {isWriteError && <span className="status-err">✗ {errorMessage}</span>}
+            </div>
+        </form>
     )
 }

@@ -5,6 +5,7 @@ import PermissionGate from './PermissionGate'
 import { useWriteRecord } from '../hooks/useWriteRecord'
 import { RESOLVER_ABI } from '../contracts'
 import { SUPPORTED_COINS, encodeAddress, validateAddress, getCoinName } from '../utils/coins'
+import { supportedAddresses, getSupportedAddressByCoin } from '../utils/supportedChains'
 
 /**
  * AddressRecords — Read/write multi-coin addresses
@@ -29,21 +30,46 @@ export default function AddressRecords({ nameData, isConnected }) {
                 </div>
             ) : (
                 <div className="records">
-                    {SUPPORTED_COINS.map(coin => {
-                        const addr = multiCoinAddresses[coin.coinType]
-                        return (
-                            <AddressRow
-                                key={coin.coinType}
-                                coin={coin}
-                                address={addr}
-                                node={node}
-                                resolver={resolver}
-                                isOwner={isOwner}
-                                isConnected={isConnected}
-                                onSuccess={refetch}
-                            />
-                        )
-                    })}
+                    {(() => {
+                        const displayCoinTypes = new Set(SUPPORTED_COINS.map(c => c.coinType));
+                        Object.keys(multiCoinAddresses).forEach(ct => displayCoinTypes.add(Number(ct)));
+
+                        return Array.from(displayCoinTypes).map(coinType => {
+                            let coin = SUPPORTED_COINS.find(c => c.coinType === coinType);
+                            if (!coin) {
+                                const sc = getSupportedAddressByCoin(coinType);
+                                if (sc) {
+                                    coin = {
+                                        name: sc.label,
+                                        symbol: sc.chainName.toUpperCase(),
+                                        coinType: sc.coinType,
+                                        icon: '❖'
+                                    };
+                                } else {
+                                    coin = {
+                                        name: getCoinName(coinType),
+                                        symbol: `CT_${coinType}`,
+                                        coinType: coinType,
+                                        icon: '❖'
+                                    };
+                                }
+                            }
+
+                            const addr = multiCoinAddresses[coinType]
+                            return (
+                                <AddressRow
+                                    key={coinType}
+                                    coin={coin}
+                                    address={addr}
+                                    node={node}
+                                    resolver={resolver}
+                                    isOwner={isOwner}
+                                    isConnected={isConnected}
+                                    onSuccess={refetch}
+                                />
+                            )
+                        })
+                    })()}
 
                     {/* Add custom coin type */}
                     <PermissionGate isConnected={isConnected} isOwner={isOwner} action="add an address">
@@ -100,7 +126,7 @@ function AddressRow({ coin, address, node, resolver, isOwner, isConnected, onSuc
         }, 1500)
     }
 
-    const label = `${coin.icon} ${coin.name.toUpperCase()} (${coin.coinType})`
+    const label = `${coin.icon} ${coin.name.toUpperCase()}`
 
     if (editing) {
         return (
@@ -148,7 +174,8 @@ function AddressRow({ coin, address, node, resolver, isOwner, isConnected, onSuc
 
 function AddAddressForm({ node, resolver, existingCoinTypes, onSuccess }) {
     const [show, setShow] = useState(false)
-    const [coinType, setCoinType] = useState('')
+    const [selectedOption, setSelectedOption] = useState('')
+    const [customCoinType, setCustomCoinType] = useState('')
     const [addr, setAddr] = useState('')
     const [error, setError] = useState('')
     const { write, isWriting, isConfirming, isConfirmed, isWriteError, errorMessage, reset } = useWriteRecord()
@@ -164,11 +191,22 @@ function AddAddressForm({ node, resolver, existingCoinTypes, onSuccess }) {
     const handleSubmit = (e) => {
         e.preventDefault()
         setError('')
-        const ct = parseInt(coinType, 10)
-        if (isNaN(ct) || ct < 0) {
-            setError('Enter a valid coin type number')
-            return
+
+        let ct;
+        if (selectedOption === 'custom') {
+            ct = parseInt(customCoinType, 10)
+            if (isNaN(ct) || ct < 0) {
+                setError('Enter a valid custom coin type number')
+                return
+            }
+        } else {
+            ct = parseInt(selectedOption, 10)
+            if (isNaN(ct)) {
+                setError('Please select a chain first')
+                return
+            }
         }
+
         const validation = validateAddress(ct, addr)
         if (!validation.valid) {
             setError(validation.error)
@@ -187,33 +225,57 @@ function AddAddressForm({ node, resolver, existingCoinTypes, onSuccess }) {
     if (isConfirmed) {
         setTimeout(() => {
             setShow(false)
-            setCoinType('')
+            setSelectedOption('')
+            setCustomCoinType('')
             setAddr('')
             reset()
             onSuccess?.()
         }, 1500)
     }
 
+    const currentChain = selectedOption && selectedOption !== 'custom'
+        ? getSupportedAddressByCoin(parseInt(selectedOption, 10))
+        : null;
+    const placeholder = currentChain?.placeholder || "Address";
+
     return (
         <form onSubmit={handleSubmit} className="add-record-form">
-            <div className="add-record-row">
-                <div className="input-wrap input-sm">
-                    <input
+            <div className="add-record-row" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <div className="input-wrap input-sm" style={{ minWidth: '150px' }}>
+                    <select
                         className="input"
-                        type="number"
-                        value={coinType}
-                        onChange={(e) => { setCoinType(e.target.value); setError(''); reset() }}
-                        placeholder="Coin type (e.g. 60)"
-                        min="0"
-                    />
+                        value={selectedOption}
+                        onChange={(e) => { setSelectedOption(e.target.value); setError(''); reset() }}
+                        style={{ cursor: 'pointer' }}
+                    >
+                        <option value="" disabled>Select Chain…</option>
+                        {supportedAddresses.filter(c => !existingCoinTypes.includes(c.coinType)).map(c => (
+                            <option key={c.coinType} value={c.coinType}>
+                                {c.label}
+                            </option>
+                        ))}
+                        <option value="custom">Custom Coin Type…</option>
+                    </select>
                 </div>
-                <div className="input-wrap">
+                {selectedOption === 'custom' && (
+                    <div className="input-wrap input-sm" style={{ width: '120px' }}>
+                        <input
+                            className="input"
+                            type="number"
+                            value={customCoinType}
+                            onChange={(e) => { setCustomCoinType(e.target.value); setError(''); reset() }}
+                            placeholder="Coin type (e.g. 60)"
+                            min="0"
+                        />
+                    </div>
+                )}
+                <div className="input-wrap" style={{ flex: 1, minWidth: '200px' }}>
                     <input
                         className="input"
                         type="text"
                         value={addr}
                         onChange={(e) => { setAddr(e.target.value); setError(''); reset() }}
-                        placeholder="Address"
+                        placeholder={placeholder}
                         spellCheck={false}
                         autoComplete="off"
                     />

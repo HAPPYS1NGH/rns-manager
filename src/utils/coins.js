@@ -26,13 +26,15 @@ export function decodeAddress(coinType, rawHex) {
     }
 
     try {
-        const coder = getCoderByCoinType(coinType)
+        let coderCoinType = coinType;
+        if (coinType >= 2147483648) coderCoinType = 60; // Fallback to ETH (60) for ENSIP-11 EVM chains
+        const coder = getCoderByCoinType(coderCoinType);
         // Strip 0x prefix and convert to Uint8Array
-        const bytes = hexToBytes(rawHex)
-        return coder.encode(bytes)
+        const bytes = hexToBytes(rawHex);
+        return coder.encode(bytes);
     } catch (err) {
-        console.warn(`Failed to decode address for coinType ${coinType}:`, err)
-        return rawHex // fallback: return raw hex
+        console.warn(`Failed to decode address for coinType ${coinType}:`, err);
+        return rawHex; // fallback: return raw hex
     }
 }
 
@@ -43,9 +45,11 @@ export function decodeAddress(coinType, rawHex) {
  * @returns {string} - Hex-encoded bytes with 0x prefix
  */
 export function encodeAddress(coinType, address) {
-    const coder = getCoderByCoinType(coinType)
-    const bytes = coder.decode(address)
-    return bytesToHex(bytes)
+    let coderCoinType = coinType;
+    if (coinType >= 2147483648) coderCoinType = 60; // Fallback to ETH (60) for ENSIP-11 EVM chains
+    const coder = getCoderByCoinType(coderCoinType);
+    const bytes = coder.decode(address);
+    return bytesToHex(bytes);
 }
 
 /**
