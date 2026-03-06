@@ -1,22 +1,18 @@
 /**
  * Content hash encoding/decoding utilities
- * Uses multiformats/cid directly since @ensdomains/content-hash v3's
- * encode() doesn't produce proper multicodec-prefixed contenthash bytes.
+ * Uses @ensdomains/content-hash for standard ENS content hash encoding
  */
-import { CID } from 'multiformats/cid'
+import { encode, decode, getCodec } from '@ensdomains/content-hash'
 
-// Multicodec namespace prefixes for contenthash
-const NAMESPACE = {
-    ipfs: 0xe3,
-    ipns: 0xe5,
-    swarm: 0xe4,
+const URI_SCHEMES = {
+    ipfs: 'ipfs://',
+    swarm: 'swarm://',
+    onion: 'onion://',
+    onion3: 'onion3://',
+    ipns: 'ipns://',
 }
 
-const NAMESPACE_NAMES = {
-    0xe3: 'ipfs',
-    0xe5: 'ipns',
-    0xe4: 'swarm',
-}
+const SUPPORTED_PROTOCOLS = Object.keys(URI_SCHEMES)
 
 /**
  * Decode raw content hash bytes from the resolver into a human-readable URI
@@ -29,24 +25,23 @@ export function decodeContentHash(rawHex) {
     }
 
     try {
-        const clean = rawHex.startsWith('0x') ? rawHex.slice(2) : rawHex
-        const bytes = hexToBytes(clean)
-
-        const nsCode = bytes[0]
-        const nsName = NAMESPACE_NAMES[nsCode]
-
-        if (!nsName) {
-            return null // unknown namespace
+        const normalized = rawHex.startsWith('0x') ? rawHex : `0x${rawHex}`
+        
+        // Use the library's getCodec to determine protocol
+        let protocol
+        try {
+            protocol = getCodec(normalized)
+        } catch {
+            // Fall back to hex prefix detection for unknown codecs
+            protocol = getProtocolFromHex(normalized)
+        }
+        
+        if (!protocol || !URI_SCHEMES[protocol]) {
+            return null
         }
 
-        if (nsName === 'ipfs' || nsName === 'ipns') {
-            const cidBytes = bytes.slice(1)
-            const cid = CID.decode(cidBytes)
-            return `${nsName}://${cid.toString()}`
-        }
-
-        // Swarm or other: return raw hex after namespace byte
-        return `${nsName}://${bytesToHex(bytes.slice(1))}`
+        const decoded = decode(normalized)
+        return `${URI_SCHEMES[protocol]}${decoded}`
     } catch (err) {
         console.warn('Failed to decode content hash:', err)
         return null
@@ -57,58 +52,48 @@ export function decodeContentHash(rawHex) {
  * Encode a content hash value into raw bytes for the resolver.
  * Accepts:
  *   - IPFS CID (Qm... or bafy...)
- *   - ipfs://CID
- *   - Full URI with any supported scheme
+ *   - Swarm hash
+ *   - Onion/onion3 address
+ *   - Full URI with any supported scheme (ipfs://, swarm://, onion://, onion3://)
  *
- * @param {string} input - CID string or URI
+ * @param {string} input - CID string, hash, or URI
  * @returns {string} - Hex-encoded contenthash bytes with 0x prefix
  */
 export function encodeContentHash(input) {
     const trimmed = input.trim()
 
-    // Try to parse as URI first
-    const uriMatch = trimmed.match(/^(ipfs|ipns):\/\/(.+)$/)
+    const uriMatch = trimmed.match(/^(ipfs|ipns|swarm|onion|onion3):\/\/(.+)$/)
 
-    let scheme, value
+    let protocol, value
     if (uriMatch) {
-        scheme = uriMatch[1]
+        protocol = uriMatch[1]
         value = uriMatch[2]
     } else {
-        // Assume raw IPFS CID if no scheme (most common use case)
-        scheme = 'ipfs'
-        value = trimmed
+        // Try to detect protocol from format
+        protocol = detectProtocol(trimmed)
+        if (!protocol) {
+            // Default to IPFS for raw CIDs
+            protocol = 'ipfs'
+            value = trimmed
+        } else {
+            value = trimmed
+        }
     }
 
-    const nsCode = NAMESPACE[scheme]
-    if (nsCode === undefined) {
-        throw new Error(`Unsupported scheme: ${scheme}. Use ipfs:// or ipns://`)
+    if (!SUPPORTED_PROTOCOLS.includes(protocol)) {
+        throw new Error(`Unsupported protocol: ${protocol}. Use ipfs, swarm, onion, or onion3`)
     }
 
-    if (scheme === 'ipfs') {
-        let cid = CID.parse(value)
-        // Convert v0 CIDs (Qm...) to v1 for proper encoding
-        if (cid.version === 0) cid = cid.toV1()
-        const cidBytes = cid.bytes
-        const result = new Uint8Array(1 + cidBytes.length)
-        result[0] = nsCode
-        result.set(cidBytes, 1)
-        return '0x' + bytesToHexStr(result)
+    try {
+        const encoded = encode(protocol, value)
+        return `0x${encoded}`
+    } catch (err) {
+        throw new Error(`Failed to encode ${protocol} content hash: ${err.message}`)
     }
-
-    if (scheme === 'ipns') {
-        // IPNS names are typically encoded as UTF-8 bytes
-        const nameBytes = new TextEncoder().encode(value)
-        const result = new Uint8Array(1 + nameBytes.length)
-        result[0] = nsCode
-        result.set(nameBytes, 1)
-        return '0x' + bytesToHexStr(result)
-    }
-
-    throw new Error(`Encoding not yet implemented for: ${scheme}`)
 }
 
 /**
- * Validate a content hash input (CID or URI)
+ * Validate a content hash input
  * @param {string} input
  * @returns {{ valid: boolean, error?: string }}
  */
@@ -135,20 +120,49 @@ export function getContentHashProtocol(uri) {
     return match ? match[1].toUpperCase() : null
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+/**
+ * Get the protocol type from encoded hex bytes
+ * @param {string} hex - Raw hex bytes
+ * @returns {string|null} - Protocol name (ipfs, swarm, onion, onion3)
+ */
+function getProtocolFromHex(hex) {
+    if (!hex || hex === '0x') return null
+    
+    const clean = hex.startsWith('0x') ? hex.slice(2) : hex
+    if (clean.length < 2) return null
 
-function hexToBytes(hex) {
-    const bytes = new Uint8Array(hex.length / 2)
-    for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(hex.substr(i * 2, 2), 16)
+    // Multicodec prefixes
+    const prefixes = {
+        'e3': 'ipns',
+        'e4': 'swarm',
+        'e5': 'ipfs',
+        'bc': 'onion',
+        'bd': 'onion3',
     }
-    return bytes
+
+    const code = clean.substring(0, 2)
+    return prefixes[code] || null
 }
 
-function bytesToHex(bytes) {
-    return '0x' + bytesToHexStr(bytes)
+/**
+ * Detect protocol from raw value format
+ * @param {string} value - Raw value
+ * @returns {string|null} - Protocol name
+ */
+function detectProtocol(value) {
+    // Onion addresses are 16 characters base32
+    if (/^[a-z2]{16}$/i.test(value)) return 'onion'
+    // Onion3 addresses are 56 characters base32
+    if (/^[a-z2]{56}$/i.test(value)) return 'onion3'
+    // Swarm addresses start with 0x
+    if (/^0x[a-f0-9]{40}$/i.test(value)) return 'swarm'
+    return null
 }
 
-function bytesToHexStr(bytes) {
-    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+/**
+ * Get supported protocols for UI
+ * @returns {string[]} - List of supported protocol names
+ */
+export function getSupportedProtocols() {
+    return SUPPORTED_PROTOCOLS
 }
