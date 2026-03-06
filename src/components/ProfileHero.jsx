@@ -23,7 +23,15 @@ export default function ProfileHero({ name, nameData }) {
                 <div className="hero-name-row">
                     <h1 className="hero-name">{displayName}</h1>
                     <span className="hero-tld">.rsk</span>
-                    <span className="hero-eth">.eth</span>
+                    <a
+                        href={`https://app.ens.domains/${ensName}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hero-eth-link"
+                        title="View on ENS App"
+                    >
+                        .eth
+                    </a>
                 </div>
 
                 <div className="hero-badges">
