@@ -111,27 +111,26 @@ export default function App() {
         {!name && (
           <section className="landing-info">
             <div className="landing-card">
-              <h2 className="landing-title">RNS Names are ENS Compatible</h2>
+              <h2 className="landing-title">Your RNS name works on Ethereum too</h2>
               <p className="landing-text">
-                Every RNS name resolves as <span className="mono">{name ? name.replace('.rsk', '.rsk.eth') : '*.rsk.eth'}</span> on Ethereum.
-                Manage your profile, addresses, and content hash here, or view on ENS App.
+                Search for your <span className="mono">.rsk</span> name above. Each one resolves as <span className="mono">.rsk.eth</span> on Ethereum through the CCIP gateway, so you can use it across both networks.
               </p>
               <div className="landing-features">
                 <div className="feature">
-                  <span className="feature-icon">📍</span>
-                  <span>Multi-chain addresses</span>
+                  <span className="feature-dot" />
+                  <span>Add addresses for any chain</span>
                 </div>
                 <div className="feature">
-                  <span className="feature-icon">📝</span>
-                  <span>Profile & social records</span>
+                  <span className="feature-dot" />
+                  <span>Set your profile and social links</span>
                 </div>
                 <div className="feature">
-                  <span className="feature-icon">🔗</span>
-                  <span>Content hash (IPFS)</span>
+                  <span className="feature-dot" />
+                  <span>Point to IPFS content</span>
                 </div>
                 <div className="feature">
-                  <span className="feature-icon">🌐</span>
-                  <span>Subdomains</span>
+                  <span className="feature-dot" />
+                  <span>Create subdomains</span>
                 </div>
               </div>
             </div>

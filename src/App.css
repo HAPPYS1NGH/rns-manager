@@ -1022,8 +1022,12 @@ body {
   color: var(--text);
 }
 
-.feature-icon {
-  font-size: 1.1rem;
+.feature-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--orange);
+  flex-shrink: 0;
 }
 
 /* ─── Tab Navigation ────────────────────────────────────────────── */
