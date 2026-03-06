@@ -867,6 +867,20 @@ body {
   opacity: 0.7;
 }
 
+.hero-rsk-link {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  color: var(--orange);
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.hero-rsk-link:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
 .hero-eth-link {
   font-family: var(--font-mono);
   font-size: 0.65rem;
@@ -1298,6 +1312,10 @@ body {
 
   .hero-eth-link {
     font-size: 0.55rem;
+  }
+
+  .hero-rsk-link {
+    font-size: 1.1rem;
   }
 
   .hero-badges {

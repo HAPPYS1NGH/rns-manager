@@ -22,7 +22,15 @@ export default function ProfileHero({ name, nameData }) {
             <div className="hero-info">
                 <div className="hero-name-row">
                     <h1 className="hero-name">{displayName}</h1>
-                    <span className="hero-tld">.rsk</span>
+                    <a
+                        href={`https://explorer.rootstock.io/address/${owner}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hero-rsk-link"
+                        title="View on Rootstock Explorer"
+                    >
+                        .rsk
+                    </a>
                     <a
                         href={`https://app.ens.domains/${ensName}`}
                         target="_blank"
