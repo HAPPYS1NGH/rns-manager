@@ -859,6 +859,14 @@ body {
   color: var(--orange);
 }
 
+.hero-eth {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--muted);
+  margin-left: 2px;
+  opacity: 0.7;
+}
+
 .hero-display-name {
   font-size: 0.95rem;
   color: var(--muted);
@@ -1266,6 +1274,10 @@ body {
 
   .hero-name {
     font-size: 1.4rem;
+  }
+
+  .hero-eth {
+    font-size: 0.55rem;
   }
 
   .hero-badges {

@@ -23,6 +23,7 @@ export default function ProfileHero({ name, nameData }) {
                 <div className="hero-name-row">
                     <h1 className="hero-name">{displayName}</h1>
                     <span className="hero-tld">.rsk</span>
+                    <span className="hero-eth">.eth</span>
                 </div>
 
                 <div className="hero-badges">
