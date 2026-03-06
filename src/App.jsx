@@ -113,7 +113,7 @@ export default function App() {
             <div className="landing-card">
               <h2 className="landing-title">RNS Names are ENS Compatible</h2>
               <p className="landing-text">
-                Every RNS name resolves as <span className="mono">{name || '*.rsk'}.rsk.eth</span> on Ethereum.
+                Every RNS name resolves as <span className="mono">{name ? name.replace('.rsk', '.rsk.eth') : '*.rsk.eth'}</span> on Ethereum.
                 Manage your profile, addresses, and content hash here, or view on ENS App.
               </p>
               <div className="landing-features">
