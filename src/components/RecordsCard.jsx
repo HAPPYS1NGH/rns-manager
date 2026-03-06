@@ -7,8 +7,9 @@ import { RNS_REGISTRY_ADDRESS, REGISTRY_ABI, RESOLVER_ABI, PUBLIC_RESOLVER_ADDRE
 
 /**
  * RecordsCard — Core name info: owner, resolver, RSK address
+ * When showAdvanced is true, shows resolver and set resolver form
  */
-export default function RecordsCard({ nameData, isConnected }) {
+export default function RecordsCard({ nameData, isConnected, showAdvanced = false }) {
     const {
         name, node, nameExists, owner, resolver, hasResolver,
         rskAddress, isLoading, isOwner,
@@ -20,7 +21,6 @@ export default function RecordsCard({ nameData, isConnected }) {
         <section className="card records-card">
             <h2 className="card-title">
                 <span className="title-icon">▸</span> RECORDS
-                <span className="name-badge">{name}</span>
             </h2>
 
             {isLoading ? (
@@ -36,21 +36,25 @@ export default function RecordsCard({ nameData, isConnected }) {
             ) : (
                 <div className="records">
                     <RecordRow label="OWNER" value={owner} />
-                    <RecordRow
-                        label="RESOLVER"
-                        value={hasResolver ? resolver : null}
-                        dim={!hasResolver}
-                        dimText="(no resolver set)"
-                    />
-                    <RecordRow
-                        label="RSK ADDRESS"
-                        value={rskAddress}
-                        dim={!rskAddress}
-                        dimText="(not set)"
-                    />
+                    
+                    {showAdvanced && (
+                        <>
+                            <RecordRow
+                                label="RESOLVER"
+                                value={hasResolver ? resolver : null}
+                                dim={!hasResolver}
+                                dimText="(no resolver set)"
+                            />
+                            <RecordRow
+                                label="RSK ADDRESS"
+                                value={rskAddress}
+                                dim={!rskAddress}
+                                dimText="(not set)"
+                            />
+                        </>
+                    )}
 
-                    {/* Set Resolver action (when no resolver is set) */}
-                    {nameExists && !hasResolver && (
+                    {showAdvanced && nameExists && !hasResolver && (
                         <PermissionGate isConnected={isConnected} isOwner={isOwner} action="set a resolver">
                             <SetResolverForm node={node} />
                         </PermissionGate>

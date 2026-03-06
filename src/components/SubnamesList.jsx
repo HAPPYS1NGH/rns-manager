@@ -64,7 +64,7 @@ export default function SubnamesList({ parentName, onManage }) {
                                 {sub.hasResolver && <span className="resolver-dot" title="Has resolver">●</span>}
                                 {!sub.hasResolver && <span className="resolver-dot dim" title="No resolver">○</span>}
                                 {sub.fullName && (
-                                    <span className="manage-hint">MANAGE →</span>
+                                    <span className="manage-hint">Check →</span>
                                 )}
                             </div>
                         </div>
