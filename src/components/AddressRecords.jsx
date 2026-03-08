@@ -96,8 +96,20 @@ function AddressRow({ coin, address, node, resolver, isOwner, isConnected, onSuc
 
     const handleSave = () => {
         setError('')
+        console.info('[AddressRow] Saving address record', {
+            coinType: coin.coinType,
+            coinName: coin.name,
+            addressInput: newAddr.trim(),
+            resolver,
+        })
         const validation = validateAddress(coin.coinType, newAddr)
         if (!validation.valid) {
+            console.warn('[AddressRow] Address validation failed', {
+                coinType: coin.coinType,
+                coinName: coin.name,
+                addressInput: newAddr.trim(),
+                validationError: validation.error,
+            })
             setError(validation.error)
             return
         }
@@ -208,7 +220,17 @@ function AddAddressForm({ node, resolver, existingCoinTypes, onSuccess }) {
         }
 
         const validation = validateAddress(ct, addr)
+        console.info('[AddAddressForm] Submitting address record', {
+            coinType: ct,
+            addressInput: addr.trim(),
+            resolver,
+        })
         if (!validation.valid) {
+            console.warn('[AddAddressForm] Address validation failed', {
+                coinType: ct,
+                addressInput: addr.trim(),
+                validationError: validation.error,
+            })
             setError(validation.error)
             return
         }
