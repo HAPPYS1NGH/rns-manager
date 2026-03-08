@@ -254,14 +254,14 @@ export default function AddressRecords({ nameData, isConnected }) {
                         />
                         <div className="action-row address-save-row">
                             <button
-                                className="btn-primary btn-sm"
+                                className="btn-primary btn-sm address-save-primary"
                                 onClick={handleSaveAll}
                                 disabled={isSaving || pendingRecords.length === 0}
                             >
                                 {isSaving ? 'Saving changes…' : 'Save changes'}
                             </button>
                             <button
-                                className="btn-ghost btn-sm"
+                                className="btn-ghost btn-sm address-save-secondary"
                                 onClick={handleResetAll}
                                 disabled={isSaving || pendingRecords.length === 0}
                             >

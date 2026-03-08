@@ -669,6 +669,34 @@ body {
   flex-wrap: wrap;
 }
 
+.address-save-row {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  align-items: center;
+  gap: 14px;
+}
+
+.address-save-primary {
+  min-width: 168px;
+  justify-content: center;
+  padding: 10px 20px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(255, 107, 0, 0.18) 0%, rgba(255, 138, 51, 0.1) 100%);
+  border-color: rgba(255, 107, 0, 0.5);
+  box-shadow: 0 10px 24px rgba(255, 107, 0, 0.14);
+}
+
+.address-save-primary:hover:not(:disabled) {
+  box-shadow: 0 14px 28px rgba(255, 107, 0, 0.22);
+}
+
+.address-save-secondary {
+  border-radius: 10px;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
 .switch-chain-block {
   display: flex;
   flex-direction: column;
