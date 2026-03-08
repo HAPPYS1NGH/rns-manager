@@ -442,6 +442,17 @@ body {
   border-bottom: none;
 }
 
+.address-row-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.address-row-meta {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0 12px 176px;
+}
+
 .record-row-editing {
   flex-direction: column;
   gap: 10px;
@@ -777,6 +788,12 @@ body {
   font-family: var(--font-mono);
   font-size: 0.78rem;
   animation: fadeInSlide 0.3s ease;
+}
+
+.status-pending {
+  color: var(--orange);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
 }
 
 .status-err {

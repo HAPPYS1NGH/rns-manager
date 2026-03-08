@@ -144,6 +144,13 @@ export const RESOLVER_ABI = [
     stateMutability: 'nonpayable',
     type: 'function',
   },
+  {
+    name: 'multicall',
+    inputs: [{ name: 'data', type: 'bytes[]' }],
+    outputs: [{ name: 'results', type: 'bytes[]' }],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
 
   // ── Text records (ENSIP-5) ──
   {

@@ -1,21 +1,203 @@
-import { useState } from 'react'
-import { isAddress } from 'viem'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { simulateContract, waitForTransactionReceipt, writeContract } from '@wagmi/core'
+import { rootstock } from 'viem/chains'
+import { useConfig } from 'wagmi'
 import RecordRow from './RecordRow'
 import PermissionGate from './PermissionGate'
-import { useWriteRecord } from '../hooks/useWriteRecord'
 import { RESOLVER_ABI } from '../contracts'
-import { SUPPORTED_COINS, encodeAddress, validateAddress, getCoinName } from '../utils/coins'
+import { SUPPORTED_COINS, buildMulticallSetAddrCalls, validateAddress, getCoinName } from '../utils/coins'
 import { supportedAddresses, getSupportedAddressByCoin } from '../utils/supportedChains'
+import {
+    buildAddressMap,
+    createAddressDrafts,
+    getChangedAddressRecords,
+    upsertAddressDraft,
+} from '../utils/address-records.logic.ts'
 
 /**
  * AddressRecords — Read/write multi-coin addresses
  */
 export default function AddressRecords({ nameData, isConnected }) {
     const { name, node, hasResolver, resolver, multiCoinAddresses, isOwner, isLoadingRecords, refetch } = nameData
+    const config = useConfig()
 
     if (!name || !hasResolver) return null
 
-    const hasAnyAddress = Object.keys(multiCoinAddresses).length > 0
+    const initialRecords = useMemo(
+        () => Object.entries(multiCoinAddresses || {}).map(([coinType, value]) => ({
+            coinType: Number(coinType),
+            value,
+        })),
+        [multiCoinAddresses],
+    )
+    const initialAddressMap = useMemo(() => buildAddressMap(initialRecords), [initialRecords])
+    const [drafts, setDrafts] = useState(() => createAddressDrafts(supportedAddresses, initialRecords))
+    const [fieldErrors, setFieldErrors] = useState({})
+    const [saveState, setSaveState] = useState({
+        status: 'idle',
+        currentIndex: -1,
+        total: 0,
+        currentLabel: '',
+        errorMessage: '',
+    })
+
+    useEffect(() => {
+        setDrafts(createAddressDrafts(supportedAddresses, initialRecords))
+        setFieldErrors({})
+        setSaveState({
+            status: 'idle',
+            currentIndex: -1,
+            total: 0,
+            currentLabel: '',
+            errorMessage: '',
+        })
+    }, [initialRecords])
+
+    const hasAnyAddress = drafts.length > 0
+    const draftCoinTypes = useMemo(() => drafts.map(draft => draft.coinType), [drafts])
+    const pendingRecords = useMemo(
+        () => getChangedAddressRecords(drafts, initialRecords),
+        [drafts, initialRecords],
+    )
+    const isSaving = saveState.status === 'saving'
+
+    const upsertDraft = useCallback((coinType, value) => {
+        const normalizedValue = value.trim()
+        const supported = getSupportedAddressByCoin(coinType)
+        if (!supported) return
+
+        setDrafts(prev => {
+            const existing = prev.find(draft => draft.coinType === coinType)
+            const nextDraft = {
+                coinType,
+                value: normalizedValue,
+                chainName: supported.chainName,
+                label: supported.label,
+                placeholder: supported.placeholder,
+                chainId: supported.chainId,
+                isEvm: supported.isEvm,
+                isDirty: (initialAddressMap[coinType]?.value ?? '') !== normalizedValue,
+                isNew: !initialAddressMap[coinType],
+            }
+
+            return existing
+                ? upsertAddressDraft(prev, nextDraft)
+                : upsertAddressDraft(prev, nextDraft)
+        })
+
+        setFieldErrors(prev => {
+            const next = { ...prev }
+            delete next[coinType]
+            return next
+        })
+        setSaveState(prev => prev.status === 'idle' ? prev : {
+            status: 'idle',
+            currentIndex: -1,
+            total: 0,
+            currentLabel: '',
+            errorMessage: '',
+        })
+    }, [initialAddressMap])
+
+    const resetDraft = useCallback((coinType) => {
+        const initial = initialAddressMap[coinType]
+        if (!initial) {
+            setDrafts(prev => prev.filter(draft => draft.coinType !== coinType))
+        } else {
+            upsertDraft(coinType, initial.value)
+            setDrafts(prev => prev.map(draft => draft.coinType === coinType ? {
+                ...draft,
+                value: initial.value,
+                isDirty: false,
+                isNew: false,
+            } : draft))
+        }
+
+        setFieldErrors(prev => {
+            const next = { ...prev }
+            delete next[coinType]
+            return next
+        })
+    }, [initialAddressMap, upsertDraft])
+
+    const handleAddDraft = useCallback((coinType, value) => {
+        upsertDraft(coinType, value)
+    }, [upsertDraft])
+
+    const handleSaveAll = useCallback(async () => {
+        if (pendingRecords.length === 0 || isSaving) return
+
+        const nextErrors = {}
+        for (const record of pendingRecords) {
+            const validation = validateAddress(record.coinType, record.value)
+            if (!validation.valid) {
+                nextErrors[record.coinType] = validation.error
+            }
+        }
+
+        if (Object.keys(nextErrors).length > 0) {
+            setFieldErrors(nextErrors)
+            setSaveState({
+                status: 'error',
+                currentIndex: -1,
+                total: pendingRecords.length,
+                currentLabel: '',
+                errorMessage: 'Fix the invalid addresses before saving.',
+            })
+            return
+        }
+
+        try {
+            setSaveState({
+                status: 'saving',
+                currentIndex: 0,
+                total: pendingRecords.length,
+                currentLabel: `${pendingRecords.length} update${pendingRecords.length === 1 ? '' : 's'}`,
+                errorMessage: '',
+            })
+
+            const simulation = await simulateContract(config, {
+                address: resolver,
+                abi: RESOLVER_ABI,
+                functionName: 'multicall',
+                args: [buildMulticallSetAddrCalls(node, pendingRecords)],
+                chainId: rootstock.id,
+            })
+
+            const hash = await writeContract(config, simulation.request)
+            await waitForTransactionReceipt(config, {
+                hash,
+                chainId: rootstock.id,
+            })
+
+            await refetch?.()
+            setSaveState({
+                status: 'confirmed',
+                currentIndex: 0,
+                total: pendingRecords.length,
+                currentLabel: '',
+                errorMessage: '',
+            })
+        } catch (err) {
+            setSaveState(prev => ({
+                ...prev,
+                status: 'error',
+                errorMessage: err?.shortMessage ?? err?.message ?? 'Failed to save addresses.',
+            }))
+        }
+    }, [config, isSaving, node, pendingRecords, refetch, resolver])
+
+    const handleResetAll = useCallback(() => {
+        setDrafts(createAddressDrafts(supportedAddresses, initialRecords))
+        setFieldErrors({})
+        setSaveState({
+            status: 'idle',
+            currentIndex: -1,
+            total: 0,
+            currentLabel: '',
+            errorMessage: '',
+        })
+    }, [initialRecords])
 
     return (
         <section className="card">
@@ -30,55 +212,71 @@ export default function AddressRecords({ nameData, isConnected }) {
                 </div>
             ) : (
                 <div className="records">
-                    {(() => {
-                        const displayCoinTypes = new Set(SUPPORTED_COINS.map(c => c.coinType));
-                        Object.keys(multiCoinAddresses).forEach(ct => displayCoinTypes.add(Number(ct)));
-
-                        return Array.from(displayCoinTypes).map(coinType => {
-                            let coin = SUPPORTED_COINS.find(c => c.coinType === coinType);
-                            if (!coin) {
-                                const sc = getSupportedAddressByCoin(coinType);
-                                if (sc) {
-                                    coin = {
-                                        name: sc.label,
-                                        symbol: sc.chainName.toUpperCase(),
-                                        coinType: sc.coinType,
-                                        icon: '❖'
-                                    };
-                                } else {
-                                    coin = {
-                                        name: getCoinName(coinType),
-                                        symbol: `CT_${coinType}`,
-                                        coinType: coinType,
-                                        icon: '❖'
-                                    };
-                                }
+                    {hasAnyAddress ? drafts.map((draft) => {
+                        let coin = SUPPORTED_COINS.find(c => c.coinType === draft.coinType)
+                        if (!coin) {
+                            coin = {
+                                name: draft.label,
+                                symbol: draft.chainName.toUpperCase(),
+                                coinType: draft.coinType,
+                                icon: draft.isEvm ? '◈' : '❖',
                             }
+                        }
 
-                            const addr = multiCoinAddresses[coinType]
-                            return (
-                                <AddressRow
-                                    key={coinType}
-                                    coin={coin}
-                                    address={addr}
-                                    node={node}
-                                    resolver={resolver}
-                                    isOwner={isOwner}
-                                    isConnected={isConnected}
-                                    onSuccess={refetch}
-                                />
-                            )
-                        })
-                    })()}
+                        return (
+                            <AddressRow
+                                key={draft.coinType}
+                                coin={coin}
+                                draft={draft}
+                                originalAddress={initialAddressMap[draft.coinType]?.value ?? ''}
+                                isOwner={isOwner}
+                                isConnected={isConnected}
+                                isSaving={isSaving}
+                                saveState={saveState}
+                                fieldError={fieldErrors[draft.coinType]}
+                                onCommit={upsertDraft}
+                                onReset={resetDraft}
+                            />
+                        )
+                    }) : (
+                        <div className="empty-state">
+                            <span className="empty-icon">◌</span>
+                            <span>No addresses added yet.</span>
+                        </div>
+                    )}
 
                     {/* Add custom coin type */}
                     <PermissionGate isConnected={isConnected} isOwner={isOwner} action="add an address">
                         <AddAddressForm
-                            node={node}
-                            resolver={resolver}
-                            existingCoinTypes={Object.keys(multiCoinAddresses).map(Number)}
-                            onSuccess={refetch}
+                            existingCoinTypes={draftCoinTypes}
+                            onAddDraft={handleAddDraft}
+                            disabled={isSaving}
                         />
+                        <div className="action-row address-save-row">
+                            <button
+                                className="btn-primary btn-sm"
+                                onClick={handleSaveAll}
+                                disabled={isSaving || pendingRecords.length === 0}
+                            >
+                                {isSaving ? 'Saving changes…' : 'Save changes'}
+                            </button>
+                            <button
+                                className="btn-ghost btn-sm"
+                                onClick={handleResetAll}
+                                disabled={isSaving || pendingRecords.length === 0}
+                            >
+                                Discard
+                            </button>
+                            {saveState.status === 'saving' && (
+                                <span className="status-pending">{saveState.currentLabel} in progress…</span>
+                            )}
+                            {saveState.status === 'confirmed' && (
+                                <span className="status-ok">✓ Changes saved</span>
+                            )}
+                            {saveState.status === 'error' && saveState.errorMessage && (
+                                <span className="status-err">✗ {saveState.errorMessage}</span>
+                            )}
+                        </div>
                     </PermissionGate>
                 </div>
             )}
@@ -88,23 +286,48 @@ export default function AddressRecords({ nameData, isConnected }) {
 
 // ─── Single Address Row ─────────────────────────────────────────────────────
 
-function AddressRow({ coin, address, node, resolver, isOwner, isConnected, onSuccess }) {
+function AddressRow({
+    coin,
+    draft,
+    originalAddress,
+    isOwner,
+    isConnected,
+    isSaving,
+    saveState,
+    fieldError,
+    onCommit,
+    onReset,
+}) {
     const [editing, setEditing] = useState(false)
-    const [newAddr, setNewAddr] = useState(address || '')
+    const [newAddr, setNewAddr] = useState(draft.value || '')
     const [error, setError] = useState('')
-    const { write, status, isWriting, isConfirming, isConfirmed, isWriteError, errorMessage, reset } = useWriteRecord()
 
-    const handleSave = () => {
+    useEffect(() => {
+        setNewAddr(draft.value || '')
+        if (fieldError) {
+            setError(fieldError)
+        } else if (!editing) {
+            setError('')
+        }
+    }, [draft.value, editing, fieldError])
+
+    useEffect(() => {
+        if (draft.isNew && !isSaving) {
+            setEditing(true)
+        }
+    }, [draft.isNew, isSaving])
+
+    const handleDone = () => {
         setError('')
-        console.info('[AddressRow] Saving address record', {
+        console.info('[AddressRow] Updating staged address record', {
             coinType: coin.coinType,
             coinName: coin.name,
             addressInput: newAddr.trim(),
-            resolver,
         })
+
         const validation = validateAddress(coin.coinType, newAddr)
         if (!validation.valid) {
-            console.warn('[AddressRow] Address validation failed', {
+            console.warn('[AddressRow] Staged address validation failed', {
                 coinType: coin.coinType,
                 coinName: coin.name,
                 addressInput: newAddr.trim(),
@@ -114,31 +337,19 @@ function AddressRow({ coin, address, node, resolver, isOwner, isConnected, onSuc
             return
         }
 
-        const encoded = encodeAddress(coin.coinType, newAddr.trim())
-        write({
-            address: resolver,
-            abi: RESOLVER_ABI,
-            functionName: 'setAddr',
-            args: [node, BigInt(coin.coinType), encoded],
-        })
+        onCommit(coin.coinType, newAddr.trim())
+        setEditing(false)
     }
 
     const handleCancel = () => {
         setEditing(false)
-        setNewAddr(address || '')
+        setNewAddr(originalAddress || '')
         setError('')
-        reset()
-    }
-
-    if (isConfirmed && editing) {
-        setTimeout(() => {
-            setEditing(false)
-            reset()
-            onSuccess?.()
-        }, 1500)
+        onReset(coin.coinType)
     }
 
     const label = `${coin.icon} ${coin.name.toUpperCase()}`
+    const isCurrentSave = isSaving && saveState.currentLabel === getCoinName(coin.coinType)
 
     if (editing) {
         return (
@@ -150,20 +361,20 @@ function AddressRow({ coin, address, node, resolver, isOwner, isConnected, onSuc
                             className="input"
                             type="text"
                             value={newAddr}
-                            onChange={(e) => { setNewAddr(e.target.value); setError(''); reset() }}
+                            onChange={(e) => { setNewAddr(e.target.value); setError('') }}
                             placeholder={`${coin.symbol} address`}
                             spellCheck={false}
                             autoComplete="off"
+                            disabled={isSaving}
                         />
                     </div>
                     {error && <p className="field-error">{error}</p>}
                     <div className="action-row">
-                        <button className="btn-primary btn-sm" onClick={handleSave} disabled={isWriting || isConfirming}>
-                            {isWriting ? 'SIGN…' : isConfirming ? 'CONFIRMING…' : 'SAVE'}
+                        <button className="btn-primary btn-sm" onClick={handleDone} disabled={isSaving}>
+                            DONE
                         </button>
-                        <button className="btn-ghost btn-sm" onClick={handleCancel}>CANCEL</button>
-                        {isConfirmed && <span className="status-ok">✓ Updated</span>}
-                        {isWriteError && <span className="status-err">✗ {errorMessage}</span>}
+                        <button className="btn-ghost btn-sm" onClick={handleCancel} disabled={isSaving}>CANCEL</button>
+                        {draft.isDirty && <span className="status-pending">Unsaved</span>}
                     </div>
                 </div>
             </div>
@@ -171,31 +382,39 @@ function AddressRow({ coin, address, node, resolver, isOwner, isConnected, onSuc
     }
 
     return (
-        <RecordRow
-            label={label}
-            value={address}
-            dim={!address}
-            dimText="(not set)"
-            editable={isConnected && isOwner}
-            onEdit={() => { setNewAddr(address || ''); setEditing(true) }}
-        />
+        <div className="address-row-stack">
+            <RecordRow
+                label={label}
+                value={draft.value}
+                dim={!draft.value}
+                dimText="(not set)"
+                editable={isConnected && isOwner && !isSaving}
+                onEdit={() => { setNewAddr(draft.value || ''); setEditing(true) }}
+            />
+            {(draft.isDirty || isCurrentSave) && (
+                <div className="address-row-meta">
+                    <span className="status-pending">
+                        {isCurrentSave ? 'Saving now…' : 'Unsaved'}
+                    </span>
+                </div>
+            )}
+        </div>
     )
 }
 
 // ─── Add Address Form ───────────────────────────────────────────────────────
 
-function AddAddressForm({ node, resolver, existingCoinTypes, onSuccess }) {
+function AddAddressForm({ existingCoinTypes, onAddDraft, disabled = false }) {
     const [show, setShow] = useState(false)
     const [selectedOption, setSelectedOption] = useState('')
     const [customCoinType, setCustomCoinType] = useState('')
     const [addr, setAddr] = useState('')
     const [error, setError] = useState('')
-    const { write, isWriting, isConfirming, isConfirmed, isWriteError, errorMessage, reset } = useWriteRecord()
 
     if (!show) {
         return (
-            <button className="btn-add" onClick={() => setShow(true)}>
-                + Add Address
+            <button className="btn-add" onClick={() => setShow(true)} disabled={disabled}>
+                Add address
             </button>
         )
     }
@@ -220,13 +439,12 @@ function AddAddressForm({ node, resolver, existingCoinTypes, onSuccess }) {
         }
 
         const validation = validateAddress(ct, addr)
-        console.info('[AddAddressForm] Submitting address record', {
+        console.info('[AddAddressForm] Staging address record', {
             coinType: ct,
             addressInput: addr.trim(),
-            resolver,
         })
         if (!validation.valid) {
-            console.warn('[AddAddressForm] Address validation failed', {
+            console.warn('[AddAddressForm] Staged address validation failed', {
                 coinType: ct,
                 addressInput: addr.trim(),
                 validationError: validation.error,
@@ -235,24 +453,12 @@ function AddAddressForm({ node, resolver, existingCoinTypes, onSuccess }) {
             return
         }
 
-        const encoded = encodeAddress(ct, addr.trim())
-        write({
-            address: resolver,
-            abi: RESOLVER_ABI,
-            functionName: 'setAddr',
-            args: [node, BigInt(ct), encoded],
-        })
-    }
-
-    if (isConfirmed) {
-        setTimeout(() => {
-            setShow(false)
-            setSelectedOption('')
-            setCustomCoinType('')
-            setAddr('')
-            reset()
-            onSuccess?.()
-        }, 1500)
+        onAddDraft(ct, addr.trim())
+        setShow(false)
+        setSelectedOption('')
+        setCustomCoinType('')
+        setAddr('')
+        setError('')
     }
 
     const currentChain = selectedOption && selectedOption !== 'custom'
@@ -267,8 +473,9 @@ function AddAddressForm({ node, resolver, existingCoinTypes, onSuccess }) {
                     <select
                         className="input"
                         value={selectedOption}
-                        onChange={(e) => { setSelectedOption(e.target.value); setError(''); reset() }}
+                        onChange={(e) => { setSelectedOption(e.target.value); setError('') }}
                         style={{ cursor: 'pointer' }}
+                        disabled={disabled}
                     >
                         <option value="" disabled>Select Chain…</option>
                         {supportedAddresses.filter(c => !existingCoinTypes.includes(c.coinType)).map(c => (
@@ -285,9 +492,10 @@ function AddAddressForm({ node, resolver, existingCoinTypes, onSuccess }) {
                             className="input"
                             type="number"
                             value={customCoinType}
-                            onChange={(e) => { setCustomCoinType(e.target.value); setError(''); reset() }}
+                            onChange={(e) => { setCustomCoinType(e.target.value); setError('') }}
                             placeholder="Coin type (e.g. 60)"
                             min="0"
+                            disabled={disabled}
                         />
                     </div>
                 )}
@@ -296,23 +504,33 @@ function AddAddressForm({ node, resolver, existingCoinTypes, onSuccess }) {
                         className="input"
                         type="text"
                         value={addr}
-                        onChange={(e) => { setAddr(e.target.value); setError(''); reset() }}
+                        onChange={(e) => { setAddr(e.target.value); setError('') }}
                         placeholder={placeholder}
                         spellCheck={false}
                         autoComplete="off"
+                        disabled={disabled}
                     />
                 </div>
             </div>
             {error && <p className="field-error">{error}</p>}
             <div className="action-row">
-                <button className="btn-primary btn-sm" type="submit" disabled={isWriting || isConfirming}>
-                    {isWriting ? 'SIGN…' : isConfirming ? 'CONFIRMING…' : 'SET ADDRESS'}
+                <button className="btn-primary btn-sm" type="submit" disabled={disabled}>
+                    Add
                 </button>
-                <button className="btn-ghost btn-sm" type="button" onClick={() => { setShow(false); reset() }}>
+                <button
+                    className="btn-ghost btn-sm"
+                    type="button"
+                    onClick={() => {
+                        setShow(false)
+                        setSelectedOption('')
+                        setCustomCoinType('')
+                        setAddr('')
+                        setError('')
+                    }}
+                    disabled={disabled}
+                >
                     CANCEL
                 </button>
-                {isConfirmed && <span className="status-ok">✓ Saved</span>}
-                {isWriteError && <span className="status-err">✗ {errorMessage}</span>}
             </div>
         </form>
     )
