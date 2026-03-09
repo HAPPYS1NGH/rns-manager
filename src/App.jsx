@@ -21,6 +21,7 @@ import TextRecords from './components/TextRecords'
 import ContentHash from './components/ContentHash'
 import SubnamesList from './components/SubnamesList'
 import CreateSubname from './components/CreateSubname'
+import { useSubnames } from './hooks/useSubnames'
 import { normalizeRouteNameParam, toNamePath } from './utils/name-route'
 
 // ─── App ────────────────────────────────────────────────────────────────────
@@ -111,6 +112,7 @@ function NameManagerPage({ name = '', invalidRoute = false }) {
   }
 
   const parentName = getParentName(name)
+  const subnamesData = useSubnames(parentName)
   const ensName = name ? name.replace('.rsk', '.rsk.eth') : ''
 
   return (
@@ -184,10 +186,18 @@ function NameManagerPage({ name = '', invalidRoute = false }) {
                 <>
                  
                   {parentName && (
-                    <SubnamesList parentName={parentName} onManage={handleManageSubname} />
+                    <SubnamesList
+                      parentName={parentName}
+                      subnamesData={subnamesData}
+                      onManage={handleManageSubname}
+                    />
                   )}
                   {parentName && (
-                    <CreateSubname nameData={nameData} isConnected={isConnected} />
+                    <CreateSubname
+                      nameData={nameData}
+                      isConnected={isConnected}
+                      subnamesData={subnamesData}
+                    />
                   )}
                    <RecordsCard nameData={nameData} isConnected={isConnected} showAdvanced={true} />
                 </>

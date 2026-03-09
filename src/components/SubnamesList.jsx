@@ -1,13 +1,11 @@
-import { useSubnames } from '../hooks/useSubnames'
-
 /**
  * SubnamesList — Lists discovered subnames of a parent name
  * @param {Object} props
  * @param {string} props.parentName - Parent name (e.g. "happy.rsk")
  * @param {Function} props.onManage - Called with fullName when "manage" is clicked
  */
-export default function SubnamesList({ parentName, onManage }) {
-    const { subnames, isLoading } = useSubnames(parentName)
+export default function SubnamesList({ parentName, subnamesData, onManage }) {
+    const { subnames = [], isLoading = false } = subnamesData || {}
 
     if (!parentName) return null
 
