@@ -3,15 +3,14 @@ import { isAddress, keccak256, encodePacked, namehash } from 'viem'
 import { normalize } from 'viem/ens'
 import PermissionGate from './PermissionGate'
 import { useWriteRecord } from '../hooks/useWriteRecord'
-import { useSubnames } from '../hooks/useSubnames'
-import { RNS_REGISTRY_ADDRESS, REGISTRY_ABI, PUBLIC_RESOLVER_ADDRESS } from '../contracts'
+import { RNS_REGISTRY_ADDRESS, REGISTRY_ABI } from '../contracts'
 
 /**
  * CreateSubname — Form to create a new subname under the parent name
  */
-export default function CreateSubname({ nameData, isConnected }) {
+export default function CreateSubname({ nameData, isConnected, subnamesData }) {
     const { name: parentName, node: parentNode, isOwner, resolver: parentResolver } = nameData
-    const { addLabel, refetch } = useSubnames(parentName)
+    const { addLabel, refetch } = subnamesData
 
     const [show, setShow] = useState(false)
     const [label, setLabel] = useState('')

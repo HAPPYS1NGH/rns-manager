@@ -7,10 +7,15 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useReadContracts } from 'wagmi'
-import { namehash, keccak256, encodePacked } from 'viem'
+import { keccak256, encodePacked, namehash } from 'viem'
 import { normalize } from 'viem/ens'
 import { rootstock } from 'viem/chains'
 import { RNS_REGISTRY_ADDRESS, REGISTRY_ABI, RESOLVER_ABI } from '../contracts'
+import {
+    buildOptimisticSubnodes,
+    mergeDiscoveredSubnodes,
+    normalizeStoredLabelMap,
+} from '../utils/subname-discovery.logic.ts'
 
 const STORAGE_PREFIX = 'rns-subnames:'
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000'
@@ -39,7 +44,7 @@ const GET_SUBDOMAINS_QUERY = `
 function getStoredLabels(parentName) {
     try {
         const raw = localStorage.getItem(STORAGE_PREFIX + parentName)
-        return raw ? JSON.parse(raw) : {}  // { labelHash: labelText }
+        return raw ? normalizeStoredLabelMap(JSON.parse(raw)) : {}  // { labelHash: labelText }
     } catch {
         return {}
     }
@@ -130,13 +135,6 @@ async function fetchSubnamesFromSubgraph(parentName) {
     }
 }
 
-// ─── Compute subnode hash from parent node + label hash ─────────────────────
-
-function computeSubnodeHash(parentNode, labelHash) {
-    if (!parentNode || !labelHash) return null
-    return keccak256(encodePacked(['bytes32', 'bytes32'], [parentNode, labelHash]))
-}
-
 // ─── Hook ───────────────────────────────────────────────────────────────────
 
 /**
@@ -172,6 +170,9 @@ export function useSubnames(parentName) {
         console.log('[useSubnames] Stored labels:', stored)
         setLabelMap(stored)
 
+        const optimisticSubnodes = buildOptimisticSubnodes(parentNode, stored)
+        setDiscoveredSubnodes(optimisticSubnodes)
+
         // Fetch subnames from The Graph subgraph
         setIsFetching(true)
         fetchSubnamesFromSubgraph(parentName)
@@ -185,7 +186,7 @@ export function useSubnames(parentName) {
                     subgraphOwner: d.owner,         // Owner from subgraph (may be stale)
                     hasResolver: d.hasResolver,
                 }))
-                setDiscoveredSubnodes(nextSubnodes)
+                setDiscoveredSubnodes(mergeDiscoveredSubnodes(nextSubnodes, optimisticSubnodes))
 
                 // Merge labels: subgraph provides direct labels, localStorage takes precedence
                 if (nextSubnodes.length > 0) {
@@ -327,7 +328,7 @@ export function useSubnames(parentName) {
             if (prev.some(s => s.labelHash === labelHash)) return prev
             return [...prev, {
                 labelHash,
-                subnodeHash: parentNode ? computeSubnodeHash(parentNode, labelHash) : null,
+                subnodeHash: buildOptimisticSubnodes(parentNode, { [labelHash]: normalized })[0]?.subnodeHash ?? null,
                 label: normalized,  // We know the label since we're adding it
             }]
         })

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { normalize } from 'viem/ens'
+import { normalizeRouteNameParam } from '../utils/name-route'
 
 /**
  * NameSearch — Search bar for looking up RNS names
@@ -21,6 +21,8 @@ export default function NameSearch({ onSearch, initialValue }) {
                 ? initialValue.slice(0, -4)
                 : initialValue
             setInput(display)
+        } else {
+            setInput('')
         }
     }, [initialValue])
 
@@ -30,21 +32,13 @@ export default function NameSearch({ onSearch, initialValue }) {
         const trimmed = input.trim().toLowerCase()
         if (!trimmed) return
 
-        // Auto-append .rsk if not already there
-        const fullName = trimmed.endsWith('.rsk') ? trimmed : `${trimmed}.rsk`
-
-        // Validate no invalid characters
-        if (/[^a-z0-9.\-]/.test(fullName.replace('.rsk', ''))) {
-            setError('Name contains invalid characters')
+        const normalized = normalizeRouteNameParam(trimmed)
+        if (!normalized.isValid || !normalized.canonicalName) {
+            setError('Invalid RNS name — check for unsupported characters')
             return
         }
 
-        try {
-            normalize(fullName)
-            onSearch(fullName)
-        } catch {
-            setError('Invalid RNS name — check for unsupported characters')
-        }
+        onSearch(normalized.canonicalName)
     }
 
     return (

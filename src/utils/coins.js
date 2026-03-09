@@ -1,94 +1,161 @@
 /**
- * Multi-coin address encoding/decoding utilities
- * Wraps @ensdomains/address-encoder for use with RNS/ENS resolver contracts
+ * Multi-coin address encoding/decoding utilities for resolver addr() records.
  */
 import { getCoderByCoinType } from '@ensdomains/address-encoder'
+import { bytesToHex, encodeFunctionData, getAddress, hexToBytes } from 'viem'
 
-// ─── Supported Coin Types ───────────────────────────────────────────────────
-// SLIP-44 coin types for non-EVM chains, ENSIP-11 for EVM chains
-// ENSIP-11: coinType = 0x80000000 | chainId  (for EVM chains)
+import { getSupportedAddressByCoin, isEvmCoinType, supportedAddresses } from './supported-addresses.ts'
 
-export const SUPPORTED_COINS = [
-    { name: 'Rootstock', symbol: 'RBTC', coinType: 137, evmChainId: 30, icon: '◈' },
-    { name: 'Ethereum', symbol: 'ETH', coinType: 60, evmChainId: 1, icon: 'Ξ' },
-    { name: 'Bitcoin', symbol: 'BTC', coinType: 0, evmChainId: null, icon: '₿' },
+const COIN_DISPLAY_META = {
+    0: { symbol: 'BTC', icon: '₿' },
+    60: { symbol: 'ETH', icon: 'Ξ' },
+    137: { symbol: 'RBTC', icon: '◈' },
+    501: { symbol: 'SOL', icon: '◎' },
+}
+
+const MULTICOIN_SET_ADDR_ABI = [
+    {
+        name: 'setAddr',
+        inputs: [
+            { name: 'node', type: 'bytes32' },
+            { name: 'coinType', type: 'uint256' },
+            { name: 'a', type: 'bytes' },
+        ],
+        outputs: [],
+        stateMutability: 'nonpayable',
+        type: 'function',
+    },
 ]
 
-/**
- * Decode raw bytes from resolver into a human-readable native address
- * @param {number} coinType - SLIP-44 or ENSIP-11 coin type
- * @param {string} rawHex - Raw hex bytes from addr(node, coinType), e.g. "0x1234..."
- * @returns {string|null} - Decoded address or null if empty
- */
+export const SUPPORTED_COINS = supportedAddresses.map((coin) => {
+    const display = COIN_DISPLAY_META[coin.coinType] ?? {
+        symbol: coin.chainName.toUpperCase(),
+        icon: coin.isEvm ? '◈' : '❖',
+    }
+
+    return {
+        name: coin.label,
+        symbol: display.symbol,
+        coinType: coin.coinType,
+        evmChainId: coin.chainId ?? null,
+        icon: display.icon,
+    }
+})
+
+function getCoinDebugMeta(coinType, value) {
+    const normalizedCoinType = Number(coinType)
+    const rawValue = typeof value === 'string' ? value : ''
+
+    return {
+        coinType: normalizedCoinType,
+        coinName: getCoinName(normalizedCoinType),
+        isEvm: isEvmCoinType(normalizedCoinType),
+        valueLength: rawValue.length,
+        valuePreview: rawValue ? `${rawValue.slice(0, 18)}...${rawValue.slice(-10)}` : '',
+    }
+}
+
 export function decodeAddress(coinType, rawHex) {
     if (!rawHex || rawHex === '0x' || rawHex === '0x0' || rawHex === '0x' + '00'.repeat(20)) {
         return null
     }
 
     try {
-        let coderCoinType = coinType;
-        if (coinType >= 2147483648) coderCoinType = 60; // Fallback to ETH (60) for ENSIP-11 EVM chains
-        const coder = getCoderByCoinType(coderCoinType);
-        // Strip 0x prefix and convert to Uint8Array
-        const bytes = hexToBytes(rawHex);
-        return coder.encode(bytes);
+        if (isEvmCoinType(Number(coinType))) {
+            const decoded = getAddress(bytesToHex(hexToBytes(rawHex)))
+
+            console.info('[coins.decodeAddress] decoded EVM resolver address', {
+                ...getCoinDebugMeta(coinType, rawHex),
+                decoded,
+            })
+
+            return decoded
+        }
+
+        const coder = getCoderByCoinType(coinType)
+        const bytes = hexToBytes(rawHex)
+        const decoded = coder.encode(bytes)
+
+        console.info('[coins.decodeAddress] decoded resolver address', {
+            ...getCoinDebugMeta(coinType, rawHex),
+            byteLength: bytes.length,
+            decoded,
+        })
+
+        return decoded
     } catch (err) {
-        console.warn(`Failed to decode address for coinType ${coinType}:`, err);
-        return rawHex; // fallback: return raw hex
+        console.warn('[coins.decodeAddress] failed to decode resolver address', {
+            ...getCoinDebugMeta(coinType, rawHex),
+            errorMessage: err?.message ?? String(err),
+        })
+        return rawHex
     }
 }
 
-/**
- * Encode a human-readable native address into raw bytes for the resolver
- * @param {number} coinType - SLIP-44 or ENSIP-11 coin type
- * @param {string} address - Native address string (e.g. "0x..." for ETH, "bc1q..." for BTC)
- * @returns {string} - Hex-encoded bytes with 0x prefix
- */
 export function encodeAddress(coinType, address) {
-    let coderCoinType = coinType;
-    if (coinType >= 2147483648) coderCoinType = 60; // Fallback to ETH (60) for ENSIP-11 EVM chains
-    const coder = getCoderByCoinType(coderCoinType);
-    const bytes = coder.decode(address);
-    return bytesToHex(bytes);
+    const normalizedAddress = address.trim()
+
+    if (isEvmCoinType(Number(coinType))) {
+        return bytesToHex(hexToBytes(normalizeEvmAddress(normalizedAddress)))
+    }
+
+    const coder = getCoderByCoinType(coinType)
+    const bytes = coder.decode(normalizedAddress)
+    const encoded = bytesToHex(bytes)
+
+    console.info('[coins.encodeAddress] encoded address for resolver write', {
+        ...getCoinDebugMeta(coinType, normalizedAddress),
+        byteLength: bytes.length,
+        encoded,
+    })
+
+    return encoded
 }
 
-/**
- * Validate a native address for a given coin type
- * @param {number} coinType
- * @param {string} address
- * @returns {{ valid: boolean, error?: string }}
- */
 export function validateAddress(coinType, address) {
     if (!address || !address.trim()) {
         return { valid: false, error: 'Address is required' }
     }
+
+    const normalizedCoinType = Number(coinType)
+    const normalizedAddress = address.trim()
+    const supported = getSupportedAddressByCoin(normalizedCoinType)
+
+    console.info('[coins.validateAddress] validating address input', {
+        ...getCoinDebugMeta(normalizedCoinType, normalizedAddress),
+    })
+
     try {
-        encodeAddress(coinType, address.trim())
+        if (supported?.validate && !supported.validate(normalizedAddress)) {
+            throw new Error('Unrecognised address format')
+        }
+
+        encodeAddress(normalizedCoinType, normalizedAddress)
         return { valid: true }
     } catch (err) {
-        return { valid: false, error: `Invalid address for ${getCoinName(coinType)}: ${err.message}` }
+        console.warn('[coins.validateAddress] invalid address input', {
+            ...getCoinDebugMeta(normalizedCoinType, normalizedAddress),
+            errorMessage: err?.message ?? String(err),
+        })
+        return { valid: false, error: `Invalid address for ${getCoinName(normalizedCoinType)}: ${err.message}` }
     }
 }
 
-/**
- * Get the display name for a coin type
- */
 export function getCoinName(coinType) {
-    const coin = SUPPORTED_COINS.find(c => c.coinType === coinType)
-    return coin ? coin.name : `Coin ${coinType}`
+    const supported = getSupportedAddressByCoin(Number(coinType))
+    return supported ? supported.label : `Coin ${coinType}`
 }
 
-// ─── Internal Helpers ───────────────────────────────────────────────────────
-
-function hexToBytes(hex) {
-    const clean = hex.startsWith('0x') ? hex.slice(2) : hex
-    const bytes = new Uint8Array(clean.length / 2)
-    for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(clean.substr(i * 2, 2), 16)
-    }
-    return bytes
+export function buildMulticallSetAddrCalls(node, records) {
+    return records.map((record) =>
+        encodeFunctionData({
+            abi: MULTICOIN_SET_ADDR_ABI,
+            functionName: 'setAddr',
+            args: [node, BigInt(record.coinType), encodeAddress(record.coinType, record.value)],
+        }),
+    )
 }
 
-function bytesToHex(bytes) {
-    return '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+function normalizeEvmAddress(value) {
+    return getAddress(value)
 }
