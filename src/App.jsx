@@ -1,6 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useAccount } from 'wagmi'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from 'react-router-dom'
 
 import { useNameData } from './hooks/useNameData'
 import Header from './components/Header'
@@ -13,42 +21,55 @@ import TextRecords from './components/TextRecords'
 import ContentHash from './components/ContentHash'
 import SubnamesList from './components/SubnamesList'
 import CreateSubname from './components/CreateSubname'
-
-// ─── Path routing helpers ───────────────────────────────────────────────────
-
-function getNameFromPath() {
-  const path = window.location.pathname
-  if (!path || path === '/') return ''
-  // Remove leading slash if present (e.g. /happy.rsk → happy.rsk)
-  const cleaned = path.startsWith('/') ? path.slice(1) : path
-  const decoded = decodeURIComponent(cleaned).toLowerCase().trim()
-  // Auto-append .rsk if missing
-  if (decoded && !decoded.endsWith('.rsk')) return `${decoded}.rsk`
-  return decoded
-}
-
-function setPathRoute(name) {
-  const path = name || ''
-  window.history.replaceState(null, '', path ? `/${path}` : '/')
-}
+import { normalizeRouteNameParam, toNamePath } from './utils/name-route'
 
 // ─── App ────────────────────────────────────────────────────────────────────
 
 export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<NameManagerPage />} />
+      <Route path="/:name" element={<RnsNameRoutePage />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  )
+}
+
+function RnsNameRoutePage() {
+  const { name: routeNameParam } = useParams()
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  const normalizedRoute = useMemo(
+    () => normalizeRouteNameParam(routeNameParam),
+    [routeNameParam],
+  )
+
+  useEffect(() => {
+    if (!normalizedRoute.isValid || !normalizedRoute.canonicalName) return
+
+    const canonicalPath = toNamePath(normalizedRoute.canonicalName)
+    if (location.pathname !== canonicalPath) {
+      navigate(canonicalPath, { replace: true })
+    }
+  }, [location.pathname, navigate, normalizedRoute])
+
+  return (
+    <NameManagerPage
+      name={normalizedRoute.canonicalName ?? ''}
+      invalidRoute={!normalizedRoute.isValid}
+    />
+  )
+}
+
+function NameManagerPage({ name = '', invalidRoute = false }) {
   const { isConnected } = useAccount()
-  const [name, setName] = useState(() => getNameFromPath())
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('profile')
 
-  // Sync name from URL path on mount and popstate
   useEffect(() => {
-    const onPopState = () => {
-      const pathName = getNameFromPath()
-      if (pathName) setName(pathName)
-      else setName('')
-    }
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
-  }, [])
+    setActiveTab('profile')
+  }, [name])
 
   const nameData = useNameData(name)
 
@@ -74,21 +95,14 @@ export default function App() {
     return counts
   }, [nameData.nameExists, nameData.textRecords, nameData.multiCoinAddresses, nameData.rskAddress, nameData.contentHash])
 
-  // Handle search: update state + URL
   const handleSearch = useCallback((fullName) => {
-    setName(fullName)
-    setPathRoute(fullName)
-    setActiveTab('profile')
-  }, [])
+    navigate(toNamePath(fullName))
+  }, [navigate])
 
-  // Handle "Manage →" from SubnamesList
   const handleManageSubname = useCallback((fullName) => {
-    setName(fullName)
-    setPathRoute(fullName)
-    setActiveTab('profile')
-  }, [])
+    navigate(toNamePath(fullName))
+  }, [navigate])
 
-  // Derive parent name for subnames section
   const getParentName = (n) => {
     if (!n) return null
     const parts = n.split('.')
@@ -107,8 +121,7 @@ export default function App() {
       <main className="main">
         <NameSearch onSearch={handleSearch} initialValue={name} />
 
-        {/* Landing page - show ENS compatibility info */}
-        {!name && (
+        {!name && !invalidRoute && (
           <section className="landing-info">
             <div className="landing-card">
               <h2 className="landing-title">Your RNS name works on Ethereum too</h2>
@@ -134,6 +147,13 @@ export default function App() {
                 </div>
               </div>
             </div>
+          </section>
+        )}
+
+        {invalidRoute && (
+          <section className="card empty-state-card">
+            <span className="empty-icon">◌</span>
+            <p>Invalid RNS name in the URL</p>
           </section>
         )}
 
